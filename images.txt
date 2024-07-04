@@ -13,4 +13,3 @@ looby/aliyundrive-subscribe:latest
 easychen/cookiecloud:latest
 metacubex/clash-meta:latest
 chishin/nginx-proxy-manager-zh:latest
-centralx/clash-dashboard:latest
