@@ -1,1 +1,2 @@
 containrrr/watchtower:latest
+xiaoyaliu/alist:latest
