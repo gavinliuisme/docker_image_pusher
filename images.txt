@@ -1,2 +1,16 @@
 containrrr/watchtower:latest
 xiaoyaliu/alist:latest
+irinesistiana/mosdns:latest
+cloudnas/clouddrive2-unstable:latest
+pan93412/unblock-netease-music-enhanced:latest
+tinyfilemanager/tinyfilemanager:master
+xhofe/alist:latest
+xinjiawei1/emby_unlockd:latest
+hectorqin/reader:latest
+portainer/portainer-ce:latest
+qdtoday/qd:latest
+looby/aliyundrive-subscribe:latest
+easychen/cookiecloud:latest
+metacubex/clash-meta:latest
+chishin/nginx-proxy-manager-zh:latest
+centralx/clash-dashboard:latest
