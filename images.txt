@@ -14,3 +14,4 @@ easychen/cookiecloud:latest
 metacubex/clash-meta:latest
 chishin/nginx-proxy-manager-zh:latest
 ghcr.io/usememos/memos:latest
+cloudflare/cloudflared:latest
