@@ -17,3 +17,4 @@ ghcr.io/usememos/memos:latest
 cloudflare/cloudflared:latest
 rainey/clash-dashboard:latest
 mitmproxy/mitmproxy:latest
+spectolabs/hoverfly:latest
