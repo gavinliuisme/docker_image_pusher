@@ -20,4 +20,3 @@ mitmproxy/mitmproxy:latest
 spectolabs/hoverfly:latest
 yidadaa/chatgpt-next-web
 nfew/aio-dynamic-push:latest
-makkapakka/douyin-web:latest
