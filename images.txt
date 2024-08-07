@@ -19,3 +19,4 @@ rainey/clash-dashboard:latest
 mitmproxy/mitmproxy:latest
 spectolabs/hoverfly:latest
 yidadaa/chatgpt-next-web
+nfew/aio-dynamic-push:latest
