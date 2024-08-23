@@ -12,7 +12,7 @@ qdtoday/qd:latest
 looby/aliyundrive-subscribe:latest
 easychen/cookiecloud:latest
 metacubex/clash-meta:latest
-chishin/nginx-proxy-manager-zh:latest
+chishin/nginx-proxy-manager-zh:release
 ghcr.io/usememos/memos:latest
 cloudflare/cloudflared:latest
 rainey/clash-dashboard:latest
