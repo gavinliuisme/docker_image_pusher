@@ -20,4 +20,4 @@ mitmproxy/mitmproxy:latest
 spectolabs/hoverfly:latest
 yidadaa/chatgpt-next-web
 nfew/aio-dynamic-push:latest
-ghcr.io/screego/server:1.10.3
+ghcr.io/screego/server:1
