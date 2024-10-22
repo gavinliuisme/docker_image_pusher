@@ -21,4 +21,4 @@ spectolabs/hoverfly:latest
 yidadaa/chatgpt-next-web
 nfew/aio-dynamic-push:latest
 ghcr.io/screego/server:1
-rustdesk/rustdesk-server
+rustdesk/rustdesk-server-s6:latest
