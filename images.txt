@@ -23,4 +23,4 @@ nfew/aio-dynamic-push:latest
 ghcr.io/screego/server:1
 rustdesk/rustdesk-server-s6:latest
 p3terx/ariang:latest
-viklion/powercontrol:latest
+viklion/powercontrol:dev
