@@ -24,3 +24,4 @@ ghcr.io/screego/server:1
 rustdesk/rustdesk-server-s6:latest
 p3terx/ariang:latest
 viklion/powercontrol:dev
+unilei/aipan-netdisk-search-simple
