@@ -1,4 +1,4 @@
-name: Docker_Now
+name: Docker
 
 on:
   workflow_dispatch:
