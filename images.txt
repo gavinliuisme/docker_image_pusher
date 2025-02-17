@@ -25,3 +25,4 @@ rustdesk/rustdesk-server-s6:latest
 p3terx/ariang:latest
 viklion/powercontrol:dev
 unilei/aipan-netdisk-search-simple
+youshandefeiyang/allinone
