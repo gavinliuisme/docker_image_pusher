@@ -1,2 +1,3 @@
 awesometic/h5ai
 dreamacro/clash-premium:latest
+lotte12306/openclash
