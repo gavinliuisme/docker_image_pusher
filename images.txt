@@ -26,3 +26,5 @@ p3terx/ariang:latest
 viklion/powercontrol:dev
 unilei/aipan-netdisk-search-simple
 youshandefeiyang/allinone
+awesometic/h5ai
+dreamacro/clash-premium:latest
