@@ -1,1 +1,1 @@
-hectorqin/reader:latest
+linzeyi/hivision_idphotos
