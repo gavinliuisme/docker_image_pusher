@@ -1,1 +1,1 @@
-m1k1o/neko:vlc
+m1k1o/neko:google-chrome
