@@ -1,1 +1,1 @@
-kasmweb/edge
+kasmweb/edge:1.15.0-rolling
