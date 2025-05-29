@@ -1,1 +1,1 @@
-m1k1o/neko:chromium
+m1k1o/neko:microsoft-edge
