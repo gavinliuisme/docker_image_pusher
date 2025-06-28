@@ -1,1 +1,2 @@
 jlesage/firefox
+openlist:latest
