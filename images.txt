@@ -28,3 +28,6 @@ youshandefeiyang/allinone
 awesometic/h5ai
 dreamacro/clash-premium:latest
 linzeyi/hivision_idphotos
+jlesage/firefox
+openlistteam/openlist:latest
+mouday/domain-admin:latest
