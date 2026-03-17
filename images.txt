@@ -1,3 +1,4 @@
+containrrr/watchtower:latest
 xiaoyaliu/alist:latest
 irinesistiana/mosdns:latest
 cloudnas/clouddrive2-unstable:latest
