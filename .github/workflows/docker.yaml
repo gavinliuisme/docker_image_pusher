@@ -67,8 +67,7 @@ jobs:
       run: |
         set -e # 遇到错误立即退出
 
-        # --- 定义重试函数 ---
-        # 参数1: 最大尝试次数, 参数2: 间隔秒数, 参数3: 要执行的命令
+        # --- 1. 定义重试函数 ---
         function retry_command() {
             local max_attempts=$1
             local delay=$2
@@ -93,39 +92,67 @@ jobs:
             return 1
         }
 
-        # --- 第一遍循环：检测重名镜像 ---
+        # --- 2. 定义获取远程镜像 Digest 的函数 ---
+        # 参数: $1=镜像名, $2=平台(可选, 例如 linux/amd64)
+        function get_remote_digest() {
+            local image=$1
+            local platform=$2
+            local digest=""
+            
+            # 如果未指定平台，默认使用 linux/amd64 (GitHub Runner 默认架构)
+            if [ -z "$platform" ]; then
+                platform="linux/amd64"
+            fi
+            
+            # 解析平台字符串 os/arch
+            local os=$(echo "$platform" | cut -d'/' -f1)
+            local arch=$(echo "$platform" | cut -d'/' -f2)
+
+            # 使用 docker manifest inspect 查询，无需下载镜像
+            # --verbose 可以输出包含 digest 的详细信息
+            # 2>/dev/null 用于屏蔽错误输出，如果镜像不存在则返回空
+            local inspect_output
+            inspect_output=$(docker manifest inspect --verbose "$image" 2>/dev/null)
+            
+            if [ $? -eq 0 ]; then
+                # 尝试从 JSON 输出中提取特定平台的 Digest
+                # jq 需要安装，GitHub Actions Runner 默认包含 jq
+                digest=$(echo "$inspect_output" | jq -r --arg os "$os" --arg arch "$arch" \
+                    '.[] | select(.Descriptor.platform.os==$os and .Descriptor.platform.architecture==$arch) | .Descriptor.digest' | head -n 1)
+                
+                # 如果没找到特定平台（可能是单架构镜像或 Manifest list 结构不同），尝试获取顶层 Digest
+                if [ -z "$digest" ]; then
+                    digest=$(echo "$inspect_output" | jq -r '.[0].Descriptor.digest // empty' 2>/dev/null)
+                fi
+                # 再次尝试简单的 inspect 输出
+                if [ -z "$digest" ]; then
+                     digest=$(echo "$inspect_output" | jq -r '.Descriptor.digest // empty' 2>/dev/null)
+                fi
+            fi
+            
+            echo "$digest"
+        }
+
+        # --- 3. 第一遍循环：检测重名镜像 ---
         declare -A duplicate_images
         declare -A temp_map
         
         while IFS= read -r line || [ -n "$line" ]; do
-            # 忽略空行与注释
             [[ -z "$line" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then continue; fi
             
-            # 提取镜像名称（过滤掉 --参数）
             image=$(echo "$line" | tr ' ' '\n' | grep -v '^--' | head -n 1)
             if [[ -z "$image" ]]; then continue; fi
-            
-            # 去除摘要信息
             image="${image%%@*}"
             
-            # 提取命名空间
-            name_space=$(echo "$image" | awk -F'/' '{
-                if (NF==3) print $2; 
-                else if (NF==2) print $1; 
-                else print ""
-            }')
-            
-            # 提取镜像名（不含tag）
+            name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
             image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
             image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
             
-            # 用于判断重名的 Key
             name_space_key="${name_space}_"
             
             if [[ -n "${temp_map[$image_name]}" ]]; then
                  if [[ "${temp_map[$image_name]}" != "${name_space_key}" ]]; then
-                    echo "检测到重名镜像: $image_name (命名空间不同)"
                     duplicate_images[$image_name]="true"
                  fi
             else
@@ -134,71 +161,91 @@ jobs:
         done < images.txt
         
         
-        # --- 第二遍循环：拉取、打标签、推送 ---
+        # --- 4. 第二遍循环：检查差异、拉取、推送 ---
         while IFS= read -r line || [ -n "$line" ]; do
             [[ -z "$line" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then continue; fi
         
-            # 1. 解析 Platform 参数
+            # 解析 Platform 参数
             platform=""
             if [[ "$line" == *"--platform"* ]]; then
                 platform=$(echo "$line" | grep -oP '(?<=--platform[ =])[^\s]+')
             fi
             
-            # 2. 提取镜像名称
+            # 提取镜像名称
             image=$(echo "$line" | tr ' ' '\n' | grep -v '^--' | head -n 1)
             
-            # 3. 构建 Docker Pull 命令 (修复参数顺序)
-            if [ -z "$platform" ]; then
-                pull_cmd="docker pull $image"
-                platform_prefix=""
-            else
-                pull_cmd="docker pull --platform $platform $image"
-                platform_prefix="${platform//\//_}_"
+            # 确定最终检查的平台
+            inspect_platform=$platform
+            if [ -z "$inspect_platform" ]; then
+                inspect_platform="linux/amd64"
             fi
             
-            # 执行 Pull (带重试)
-            retry_command 3 5 "$pull_cmd"
-            
-            # 4. 计算目标镜像标签
+            # 计算目标镜像标签
             image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
-            name_space=$(echo "$image" | awk -F'/' '{
-                if (NF==3) print $2; 
-                else if (NF==2) print $1; 
-                else print ""
-            }')
+            name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
             image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
         
             name_space_prefix=""
-            # 如果是重名镜像，加上命名空间前缀
             if [[ -n "${duplicate_images[$image_name]}" ]]; then
                if [[ -n "${name_space}" ]]; then
                   name_space_prefix="${name_space}_"
                fi
             fi
             
-            # 去除摘要信息
             image_name_tag="${image_name_tag%%@*}"
+            
+            # 设置平台前缀
+            if [ -z "$platform" ]; then
+                platform_prefix=""
+            else
+                platform_prefix="${platform//\//_}_"
+            fi
             
             # 组装新镜像名
             new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$platform_prefix$name_space_prefix$image_name_tag"
             
+            echo "=============================================================================="
+            echo "检查镜像: $image"
+            echo "目标镜像: $new_image"
+            echo "平台架构: $inspect_platform"
+            
+            # --- 核心：比对 Digest ---
+            source_digest=$(get_remote_digest "$image" "$inspect_platform")
+            target_digest=$(get_remote_digest "$new_image" "$inspect_platform")
+            
+            echo "源 Digest: $source_digest"
+            echo "目标 Digest: $target_digest"
+            
+            # 如果源 Digest 获取失败，为了安全起见，尝试拉取
+            if [ -z "$source_digest" ]; then
+                echo "警告: 无法获取源镜像 Digest，将尝试拉取。"
+            fi
+            
+            # 如果两者都不为空且相等，则跳过
+            if [ -n "$source_digest" ] && [ "$source_digest" == "$target_digest" ]; then
+                echo ">>> 镜像已是最新，跳过同步。"
+                continue
+            fi
+            
+            echo ">>> 镜像有更新或目标不存在，开始同步..."
+
+            # --- 执行同步 ---
+            if [ -z "$platform" ]; then
+                pull_cmd="docker pull $image"
+            else
+                pull_cmd="docker pull --platform $platform $image"
+            fi
+            
+            # 执行 Pull (带重试)
+            retry_command 3 5 "$pull_cmd"
+            
             docker tag "$image" "$new_image"
             
-            # 执行 Push (带重试，增加间隔时间)
+            # 执行 Push (带重试)
             retry_command 3 10 "docker push $new_image"
             
             echo "开始清理磁盘空间"
-            echo "=============================================================================="
-            df -hT
-            echo "=============================================================================="
-            
-            # 清理镜像，|| true 防止因镜像未找到而报错中断
             docker rmi "$image" "$new_image" || true
-            
-            echo "磁盘空间清理完毕"
-            echo "=============================================================================="
-            df -hT
-            echo "=============================================================================="     
             
         done < images.txt
