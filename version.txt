@@ -26,6 +26,7 @@ registry.cn-hangzhou.aliyuncs.com/xfdocker/rustdesk-server-s6:latest=sha256:df8e
 registry.cn-hangzhou.aliyuncs.com/xfdocker/aio-dynamic-push:latest=sha256:8ade182d2a96a18b2a17ec7c28cd17ad6dd3afc8731bdf4a5f67b1a762d36388
 registry.cn-hangzhou.aliyuncs.com/xfdocker/portainer-ce:latest=sha256:3f7e23ed1452545ffaacc2d7127b734050a6710ebee4fd695ed62d7a71ac66c0
 registry.cn-hangzhou.aliyuncs.com/xfdocker/allinone=sha256:63611d5238857d4ced6c75e41008837b855b66c26c7cd4de12e39e210e94078c
+registry.cn-hangzhou.aliyuncs.com/xfdocker/watchtower:latest=sha256:f9086bfda061100361fc2bacf069585678d760d705cf390918ccdbda8a00980b
 registry.cn-hangzhou.aliyuncs.com/xfdocker/chatgpt-next-web=sha256:cec38cc0fea1e60cd599b4ecda3a6a38062284ae27d15ed32e0a45e74675027d
 registry.cn-hangzhou.aliyuncs.com/xfdocker/hoverfly:latest=sha256:1a976a445331ed11c85e7c6a4cc499c286ef57c6e396601ad2d02b710eadd1b6
 registry.cn-hangzhou.aliyuncs.com/xfdocker/mitmproxy:latest=sha256:194a578e789215da19e1eaf42b98d9a6cec097dc4ead17aad1e1d268d7a33e85
