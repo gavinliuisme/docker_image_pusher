@@ -4,8 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
-    # 关键配置：只有当以下路径之外的文件变动时才触发
-    # 这意味着 images.txt 变动会触发，而 version.txt 变动不会触发
+    # 关键配置：忽略 version.txt 的变动，防止自动触发循环
     paths-ignore:
       - 'version.txt'
   schedule:
@@ -17,7 +16,6 @@ env:
   DOCKER_CLIENT_TIMEOUT: 120
   COMPOSE_HTTP_TIMEOUT: 120
 
-# 赋予 GITHUB_TOKEN 写入权限，以便自动提交 version.txt
 permissions:
   contents: write
 
@@ -33,7 +31,6 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    # 增加可用磁盘空间
     - name: Maximize build space
       uses: easimon/maximize-build-space@master
       with:
@@ -127,11 +124,14 @@ jobs:
         # --- 3. 初始化 version.txt 数据 ---
         VERSION_FILE="version.txt"
         declare -A version_map
+        
+        # 读取本地记录，使用镜像名:标签作为Key
         if [ -f "$VERSION_FILE" ]; then
             echo "读取历史版本记录 $VERSION_FILE ..."
             while IFS="=" read -r key val; do
                 [[ -z "$key" ]] && continue
                 version_map["$key"]="$val"
+                echo " - 历史记录: $key = $val"
             done < "$VERSION_FILE"
         else
             echo "未找到 $VERSION_FILE，将创建新文件。"
@@ -139,7 +139,7 @@ jobs:
 
         HAS_UPDATE=0
 
-        # --- 4. 第一遍循环：检测重名镜像 ---
+        # --- 4. 第一遍循环：检测重名镜像 (用于生成目标镜像名) ---
         declare -A duplicate_images
         declare -A temp_map
         
@@ -172,6 +172,7 @@ jobs:
             [[ -z "$line" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then continue; fi
         
+            # 解析参数
             platform=""
             if [[ "$line" == *"--platform"* ]]; then
                 platform=$(echo "$line" | grep -oP '(?<=--platform[ =])[^\s]+')
@@ -179,15 +180,19 @@ jobs:
             
             image=$(echo "$line" | tr ' ' '\n' | grep -v '^--' | head -n 1)
             
+            # 确定平台
             inspect_platform=$platform
             if [ -z "$inspect_platform" ]; then
                 inspect_platform="linux/amd64"
             fi
             
+            # 解析镜像名和Tag
+            # image_name_tag 是我们要存入 version.txt 的 Key (例如 powercontrol:dev)
             image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
             name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
             image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
         
+            # 计算推送到阿里云时的实际名称 (包含平台前缀和防重名前缀)
             name_space_prefix=""
             if [[ -n "${duplicate_images[$image_name]}" ]]; then
                if [[ -n "${name_space}" ]]; then
@@ -195,7 +200,7 @@ jobs:
                fi
             fi
             
-            image_name_tag="${image_name_tag%%@*}"
+            image_name_tag_no_digest="${image_name_tag%%@*}"
             
             if [ -z "$platform" ]; then
                 platform_prefix=""
@@ -203,19 +208,23 @@ jobs:
                 platform_prefix="${platform//\//_}_"
             fi
             
-            new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$platform_prefix$name_space_prefix$image_name_tag"
+            # 最终推送到阿里云的镜像地址
+            new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$platform_prefix$name_space_prefix$image_name_tag_no_digest"
             
             echo "=============================================================================="
             echo "检查镜像: $image"
             echo "目标名称: $new_image"
+            echo "记录Key : $image_name_tag"
             
+            # 获取当前源镜像的指纹
             source_digest=$(get_remote_digest "$image" "$inspect_platform")
             
             if [ -z "$source_digest" ]; then
                 echo "警告: 无法获取源镜像指纹，将强制尝试同步。"
             fi
             
-            local_record="${version_map[$new_image]}"
+            # 读取本地记录：使用简短的 image_name_tag 作为 Key
+            local_record="${version_map[$image_name_tag]}"
             
             if [ -n "$source_digest" ] && [ "$source_digest" == "$local_record" ]; then
                 echo ">>> 本地记录匹配 (Digest: $source_digest)，跳过同步。"
@@ -224,6 +233,7 @@ jobs:
             
             echo ">>> 发现更新 (本地: $local_record vs 远程: $source_digest)，开始同步..."
 
+            # 执行同步
             if [ -z "$platform" ]; then
                 pull_cmd="docker pull $image"
             else
@@ -235,10 +245,11 @@ jobs:
             docker tag "$image" "$new_image"
             retry_command 3 10 "docker push $new_image"
             
-            # 更新内存记录
-            version_map["$new_image"]="$source_digest"
+            # 更新内存中的记录：使用简短的 image_name_tag 作为 Key
+            version_map["$image_name_tag"]="$source_digest"
             HAS_UPDATE=1
             
+            # 清理
             docker rmi "$image" "$new_image" || true
             
         done < images.txt
@@ -252,17 +263,14 @@ jobs:
             done
         fi
 
-    # --- 7. 自动提交变更 ---
     - name: Commit version file
       run: |
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.com'
         git add version.txt
-        
         if git diff --staged --quiet; then
             echo "没有需要提交的变更。"
         else
-            # 提交消息中包含 [skip ci] 是双重保险，确保其他 CI 也不会触发
             git commit -m "chore: update image versions [skip ci]"
             git push
         fi
