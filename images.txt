@@ -31,4 +31,4 @@ linzeyi/hivision_idphotos
 jlesage/firefox
 openlistteam/openlist:latest
 mouday/domain-admin:latest
-zhongbai233/tomato-novel-downloader-webui:latest-musl
+zhongbai233/tomato-novel-downloader-webui:latest
