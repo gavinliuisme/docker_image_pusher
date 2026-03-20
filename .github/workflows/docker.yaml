@@ -215,7 +215,7 @@ jobs:
             ordered_keys+=("$map_key")
             
             echo "=============================================================================="
-            echo "检查镜像: $image"
+            echo "检查镜像: $image ($CURRENT_NUM/$TOTAL_IMAGES)"
             echo "目标名称: $new_image"
             echo "记录Key : $map_key"
             
