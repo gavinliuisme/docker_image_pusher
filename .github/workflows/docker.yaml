@@ -120,15 +120,22 @@ jobs:
             echo "$digest"
         }
 
-        # --- 3. 初始化数据 ---
+        # --- 3. 初始化数据 & 统计总数 (使用 awk 更稳健) ---
         VERSION_FILE="version.txt"
         declare -A version_map
         declare -a ordered_keys
         
+        # 使用 awk 统计非空非注释行，避免 grep 返回值问题
+        TOTAL_IMAGES=$(awk '!/^[[:space:]]*#/ && !/^[[:space:]]*$/{count++} END{print count+0}' images.txt)
+        CURRENT_NUM=0
+        
         if [ -f "$VERSION_FILE" ]; then
             echo "读取历史版本记录 $VERSION_FILE ..."
-            while IFS="=" read -r key val; do
-                [[ -z "$key" ]] && continue
+            # 增加 || [ -n "$key" ] 以处理文件最后一行没有换行符的情况
+            while IFS="=" read -r key val || [ -n "$key" ]; do
+                if [[ -z "$key" ]]; then
+                    continue
+                fi
                 version_map["$key"]="$val"
             done < "$VERSION_FILE"
         else
@@ -142,8 +149,8 @@ jobs:
         declare -A temp_map
         
         while IFS= read -r line || [ -n "$line" ]; do
-            [[ -z "$line" ]] && continue
-            if echo "$line" | grep -q '^\s*#'; then continue; fi
+            if [[ -z "$line" ]]; then continue; fi
+            if echo "$line" | grep -q '^[[:space:]]*#'; then continue; fi
             
             image=$(echo "$line" | tr ' ' '\n' | grep -v '^--' | head -n 1)
             if [[ -z "$image" ]]; then continue; fi
@@ -167,9 +174,12 @@ jobs:
         
         # --- 5. 第二遍循环：对比、同步、记录顺序 ---
         while IFS= read -r line || [ -n "$line" ]; do
-            [[ -z "$line" ]] && continue
-            if echo "$line" | grep -q '^\s*#'; then continue; fi
+            if [[ -z "$line" ]]; then continue; fi
+            if echo "$line" | grep -q '^[[:space:]]*#'; then continue; fi
         
+            # 增加计数器
+            ((CURRENT_NUM++))
+            
             platform=""
             if [[ "$line" == *"--platform"* ]]; then
                 platform=$(echo "$line" | grep -oP '(?<=--platform[ =])[^\s]+')
@@ -182,7 +192,7 @@ jobs:
                 inspect_platform="linux/amd64"
             fi
             
-            # --- Key 直接使用 image 变量 (完整镜像名) ---
+            # Key 直接使用 image 变量 (完整镜像名)
             map_key="$image"
             
             # 解析用于构造目标名称的变量
@@ -211,7 +221,8 @@ jobs:
             ordered_keys+=("$map_key")
             
             echo "=============================================================================="
-            echo "检查镜像: $image"
+            # 显示当前进度/总数
+            echo "检查镜像: $image ($CURRENT_NUM/$TOTAL_IMAGES)"
             echo "目标名称: $new_image"
             echo "记录Key : $map_key"
             
