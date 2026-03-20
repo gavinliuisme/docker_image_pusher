@@ -259,6 +259,7 @@ jobs:
             rm -f "$VERSION_FILE"
             # 遍历有序数组写入文件
             for key in "${ordered_keys[@]}"; do
+                echo "$key=${version_map[$key]}" 
                 echo "$key=${version_map[$key]}" >> "$VERSION_FILE"
             done
         fi
