@@ -120,10 +120,14 @@ jobs:
             echo "$digest"
         }
 
-        # --- 3. 初始化数据 ---
+        # --- 3. 初始化数据 & 统计总数 ---
         VERSION_FILE="version.txt"
         declare -A version_map
         declare -a ordered_keys
+        
+        # 统计有效镜像行数（排除空行和注释）
+        TOTAL_IMAGES=$(grep -v '^\s*#' images.txt | grep -v '^\s*$' | wc -l)
+        CURRENT_NUM=0
         
         if [ -f "$VERSION_FILE" ]; then
             echo "读取历史版本记录 $VERSION_FILE ..."
@@ -170,6 +174,9 @@ jobs:
             [[ -z "$line" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then continue; fi
         
+            # 增加计数器
+            ((CURRENT_NUM++))
+            
             platform=""
             if [[ "$line" == *"--platform"* ]]; then
                 platform=$(echo "$line" | grep -oP '(?<=--platform[ =])[^\s]+')
@@ -211,7 +218,8 @@ jobs:
             ordered_keys+=("$map_key")
             
             echo "=============================================================================="
-            echo "检查镜像: $image"
+            # 显示当前进度/总数
+            echo "检查镜像: $image ($CURRENT_NUM/$TOTAL_IMAGES)"
             echo "目标名称: $new_image"
             echo "记录Key : $map_key"
             
