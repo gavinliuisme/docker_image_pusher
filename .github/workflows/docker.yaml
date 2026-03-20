@@ -141,8 +141,8 @@ jobs:
         declare -A duplicate_images
         declare -A temp_map
 
-        TOTAL_IMAGES=0
-        CURRENT_NUM=0
+        local TOTAL_IMAGES=0
+        local CURRENT_NUM=0
         
         while IFS= read -r line || [ -n "$line" ]; do
             [[ -z "$line" ]] && continue            
