@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
-    # 忽略 version.txt 的变动，防止循环触发
     paths-ignore:
       - 'version.txt'
   schedule:
@@ -123,9 +122,7 @@ jobs:
 
         # --- 3. 初始化数据 ---
         VERSION_FILE="version.txt"
-        # 使用关联数组存储 Digest (用于快速查找)
         declare -A version_map
-        # 使用普通数组存储顺序 (用于按序写入文件)
         declare -a ordered_keys
         
         if [ -f "$VERSION_FILE" ]; then
@@ -185,12 +182,15 @@ jobs:
                 inspect_platform="linux/amd64"
             fi
             
-            # 获取镜像名:标签 (作为 version.txt 的 key)
+            # --- Key 直接使用 image 变量 (完整镜像名) ---
+            map_key="$image"
+            
+            # 解析用于构造目标名称的变量
             image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
             name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
             image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
             
-            # 计算推送到阿里云的实际名称
+            # 构造推送到阿里云的实际名称
             name_space_prefix=""
             if [[ -n "${duplicate_images[$image_name]}" ]]; then
                if [[ -n "${name_space}" ]]; then
@@ -208,26 +208,25 @@ jobs:
             
             new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$platform_prefix$name_space_prefix$image_name_tag_no_digest"
             
-            # --- 关键：将 key 加入有序数组 (确保顺序与 images.txt 一致) ---
-            ordered_keys+=("$image_name_tag")
+            ordered_keys+=("$map_key")
             
             echo "=============================================================================="
             echo "检查镜像: $image"
             echo "目标名称: $new_image"
-            echo "记录Key : $image_name_tag"
+            echo "记录Key : $map_key"
             
+            # 获取远程 Digest
             source_digest=$(get_remote_digest "$image" "$inspect_platform")
             
             if [ -z "$source_digest" ]; then
                 echo "警告: 无法获取源镜像指纹，将强制尝试同步。"
             fi
             
-            local_record="${version_map[$image_name_tag]}"
+            local_record="${version_map[$map_key]}"
             
             # 判断是否需要更新
             if [ -n "$source_digest" ] && [ "$source_digest" == "$local_record" ]; then
                 echo ">>> 本地记录匹配 (Digest: $source_digest)，跳过同步。"
-                # 即使跳过，version_map 中已有数据，无需更新
                 continue
             fi
             
@@ -244,22 +243,24 @@ jobs:
             docker tag "$image" "$new_image"
             retry_command 3 10 "docker push $new_image"
             
-            # 更新内存中的 Digest
-            version_map["$image_name_tag"]="$source_digest"
-            HAS_UPDATE=1
+            # --- 恢复使用远程 Digest 更新记录 ---
+            # 只有当 source_digest 不为空时才更新，防止覆盖有效记录
+            if [ -n "$source_digest" ]; then
+                version_map["$map_key"]="$source_digest"
+                HAS_UPDATE=1
+            else
+                echo ">>> 由于未获取到指纹，未更新 version.txt 记录。"
+            fi
             
             docker rmi "$image" "$new_image" || true
             
         done < images.txt
 
         # --- 6. 更新 version.txt 文件 ---
-        # 只有当有更新，或者文件不存在时才重写文件（保证顺序）
         if [ "$HAS_UPDATE" -eq 1 ] || [ ! -f "$VERSION_FILE" ]; then
-            echo "更新 $VERSION_FILE 文件 (保持 images.txt 顺序)..."
+            echo "更新 $VERSION_FILE 文件..."
             rm -f "$VERSION_FILE"
-            # 遍历有序数组写入文件
             for key in "${ordered_keys[@]}"; do
-                echo "$key=${version_map[$key]}" 
                 echo "$key=${version_map[$key]}" >> "$VERSION_FILE"
             done
         fi
