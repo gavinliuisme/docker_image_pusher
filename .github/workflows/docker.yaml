@@ -136,6 +136,8 @@ jobs:
         fi
 
         HAS_UPDATE=0
+        TOTAL_IMAGES=0
+        CURRENT_NUM=0
 
         # --- 4. 第一遍循环：检测重名镜像 ---
         declare -A duplicate_images
@@ -144,7 +146,7 @@ jobs:
         while IFS= read -r line || [ -n "$line" ]; do
             [[ -z "$line" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then continue; fi
-            
+            ((TOTAL_IMAGES++))
             image=$(echo "$line" | tr ' ' '\n' | grep -v '^--' | head -n 1)
             if [[ -z "$image" ]]; then continue; fi
             image="${image%%@*}"
@@ -170,6 +172,7 @@ jobs:
             [[ -z "$line" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then continue; fi
         
+            ((CURRENT_NUM++))
             platform=""
             if [[ "$line" == *"--platform"* ]]; then
                 platform=$(echo "$line" | grep -oP '(?<=--platform[ =])[^\s]+')
@@ -211,7 +214,7 @@ jobs:
             ordered_keys+=("$map_key")
             
             echo "=============================================================================="
-            echo "检查镜像: $image"
+            echo "检查镜像: $image ($CURRENT_NUM/$TOTAL_IMAGES)"
             echo "目标名称: $new_image"
             echo "记录Key : $map_key"
             
