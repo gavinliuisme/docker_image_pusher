@@ -1,3 +1,4 @@
+metacubex/metacubexd:latest
 metacubex/mihomo:latest
 containrrr/watchtower:latest
 xiaoyaliu/alist:latest
