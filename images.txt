@@ -16,7 +16,6 @@ easychen/cookiecloud:latest
 chishin/nginx-proxy-manager-zh:release
 ghcr.io/usememos/memos:latest
 cloudflare/cloudflared:latest
-rainey/clash-dashboard:latest
 mitmproxy/mitmproxy:latest
 spectolabs/hoverfly:latest
 yidadaa/chatgpt-next-web
@@ -28,7 +27,6 @@ viklion/powercontrol:dev
 unilei/aipan-netdisk-search-simple
 youshandefeiyang/allinone
 awesometic/h5ai
-dreamacro/clash-premium:latest
 linzeyi/hivision_idphotos
 jlesage/firefox
 openlistteam/openlist:latest
