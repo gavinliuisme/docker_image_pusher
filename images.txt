@@ -1,3 +1,4 @@
+ghcr.io/netristv/ws-scrcpy:l
 ghcr.io/home-assistant/home-assistant:stable
 ghcr.io/metacubex/metacubexd:latest
 metacubex/mihomo:latest
