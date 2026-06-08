@@ -138,6 +138,7 @@ jobs:
         HAS_UPDATE=0
         TOTAL_IMAGES=0
         CURRENT_NUM=0
+        UPDATED_IMAGES=""   # <-- 新增：记录已更新的镜像名
 
         # --- 4. 第一遍循环：检测重名镜像 ---
         declare -A duplicate_images
@@ -252,6 +253,12 @@ jobs:
             if [ -n "$source_digest" ]; then
                 version_map["$map_key"]="$source_digest"
                 HAS_UPDATE=1
+                # <-- 新增：记录已更新的镜像名
+                if [ -n "$UPDATED_IMAGES" ]; then
+                    UPDATED_IMAGES="$UPDATED_IMAGES, $image"
+                else
+                    UPDATED_IMAGES="$image"
+                fi
             else
                 echo ">>> 由于未获取到指纹，未更新 version.txt 记录。"
             fi
@@ -269,6 +276,9 @@ jobs:
             done
         fi
 
+        # --- 7. 将更新的镜像名写入环境变量，供后续步骤使用 ---
+        echo "UPDATED_IMAGES=$UPDATED_IMAGES" >> $GITHUB_ENV
+
     - name: Commit version file
       run: |
         git config --global user.name 'github-actions[bot]'
@@ -277,6 +287,10 @@ jobs:
         if git diff --staged --quiet; then
             echo "没有需要提交的变更。"
         else
-            git commit -m "chore: update image versions [skip ci]"
+            if [ -n "$UPDATED_IMAGES" ]; then
+                git commit -m "chore: update ${UPDATED_IMAGES} [skip ci]"
+            else
+                git commit -m "chore: update image versions [skip ci]"
+            fi
             git push
         fi
