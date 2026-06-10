@@ -1,3 +1,4 @@
+bucknrise/docker-replay
 ghcr.io/gavinliuisme/ws-scrcpy:latest
 ghcr.io/home-assistant/home-assistant:stable
 ghcr.io/metacubex/metacubexd:latest
