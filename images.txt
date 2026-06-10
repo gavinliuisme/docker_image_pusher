@@ -15,7 +15,7 @@ portainer/portainer-ce:latest
 qdtoday/qd:latest
 looby/aliyundrive-subscribe:latest
 easychen/cookiecloud:latest
-chishin/nginx-proxy-manager-zh:release
+jc21/nginx-proxy-manager:latest
 ghcr.io/usememos/memos:latest
 cloudflare/cloudflared:latest
 mitmproxy/mitmproxy:latest
