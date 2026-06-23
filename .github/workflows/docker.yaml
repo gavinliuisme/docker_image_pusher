@@ -136,7 +136,8 @@ jobs:
         HAS_UPDATE=0
         TOTAL_IMAGES=0
         CURRENT_NUM=0
-        UPDATED_IMAGES=""   # <-- 新增：记录已更新的镜像名
+        UPDATED_IMAGES=""
+        INVALID_IMAGES=""   # <-- 新增：记录失效的镜像名
 
         # --- 4. 第一遍循环：检测重名镜像 ---
         declare -A duplicate_images
@@ -185,15 +186,12 @@ jobs:
                 inspect_platform="linux/amd64"
             fi
             
-            # --- Key 直接使用 image 变量 (完整镜像名) ---
             map_key="$image"
             
-            # 解析用于构造目标名称的变量
             image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
             name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
             image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
             
-            # 构造推送到阿里云的实际名称
             name_space_prefix=""
             if [[ -n "${duplicate_images[$image_name]}" ]]; then
                if [[ -n "${name_space}" ]]; then
@@ -218,7 +216,6 @@ jobs:
             echo "目标名称: $new_image"
             echo "记录Key : $map_key"
             
-            # 获取远程 Digest
             source_digest=$(get_remote_digest "$image" "$inspect_platform")
             
             if [ -z "$source_digest" ]; then
@@ -227,7 +224,6 @@ jobs:
             
             local_record="${version_map[$map_key]}"
             
-            # 判断是否需要更新
             if [ -n "$source_digest" ] && [ "$source_digest" == "$local_record" ]; then
                 echo ">>> 本地记录匹配 (Digest: $source_digest)，跳过同步。"
                 continue
@@ -241,17 +237,44 @@ jobs:
                 pull_cmd="docker pull --platform $platform $image"
             fi
             
-            retry_command 3 5 "$pull_cmd"
+            # --- 拉取镜像，失败则记录并跳过 ---
+            if ! retry_command 3 5 "$pull_cmd"; then
+                echo ">>> 镜像拉取失败，标记为失效镜像并跳过: $image"
+                if [ -n "$INVALID_IMAGES" ]; then
+                    INVALID_IMAGES="$INVALID_IMAGES, $image"
+                else
+                    INVALID_IMAGES="$image"
+                fi
+                continue
+            fi
             
-            docker tag "$image" "$new_image"
-            retry_command 3 10 "docker push $new_image"
+            # --- 打 tag 失败也按失效处理 ---
+            if ! docker tag "$image" "$new_image"; then
+                echo ">>> docker tag 失败，标记为失效镜像并跳过: $image"
+                if [ -n "$INVALID_IMAGES" ]; then
+                    INVALID_IMAGES="$INVALID_IMAGES, $image"
+                else
+                    INVALID_IMAGES="$image"
+                fi
+                docker rmi "$image" 2>/dev/null || true
+                continue
+            fi
             
-            # --- 恢复使用远程 Digest 更新记录 ---
-            # 只有当 source_digest 不为空时才更新，防止覆盖有效记录
+            # --- 推送镜像，失败则记录并跳过 ---
+            if ! retry_command 3 10 "docker push $new_image"; then
+                echo ">>> 镜像推送失败，标记为失效镜像并跳过: $image"
+                if [ -n "$INVALID_IMAGES" ]; then
+                    INVALID_IMAGES="$INVALID_IMAGES, $image"
+                else
+                    INVALID_IMAGES="$image"
+                fi
+                docker rmi "$image" "$new_image" 2>/dev/null || true
+                continue
+            fi
+            
             if [ -n "$source_digest" ]; then
                 version_map["$map_key"]="$source_digest"
                 HAS_UPDATE=1
-                # <-- 新增：记录已更新的镜像名
                 if [ -n "$UPDATED_IMAGES" ]; then
                     UPDATED_IMAGES="$UPDATED_IMAGES, $image"
                 else
@@ -261,11 +284,21 @@ jobs:
                 echo ">>> 由于未获取到指纹，未更新 version.txt 记录。"
             fi
             
-            docker rmi "$image" "$new_image" || true
+            docker rmi "$image" "$new_image" 2>/dev/null || true
             
         done < images.txt
 
-        # --- 6. 更新 version.txt 文件 ---
+        # --- 6. 输出失效镜像汇总 ---
+        echo "=============================================================================="
+        if [ -n "$INVALID_IMAGES" ]; then
+            echo "以下镜像同步失败（已记录为失效，本次跳过）:"
+            echo "$INVALID_IMAGES" | tr ',' '\n' | sed 's/^ *//'
+        else
+            echo "无失效镜像。"
+        fi
+        echo "=============================================================================="
+
+        # --- 7. 更新 version.txt 文件 ---
         if [ "$HAS_UPDATE" -eq 1 ] || [ ! -f "$VERSION_FILE" ]; then
             echo "更新 $VERSION_FILE 文件..."
             rm -f "$VERSION_FILE"
@@ -274,8 +307,9 @@ jobs:
             done
         fi
 
-        # --- 7. 将更新的镜像名写入环境变量，供后续步骤使用 ---
+        # --- 8. 将信息写入环境变量，供后续步骤使用 ---
         echo "UPDATED_IMAGES=$UPDATED_IMAGES" >> $GITHUB_ENV
+        echo "INVALID_IMAGES=$INVALID_IMAGES" >> $GITHUB_ENV
 
     - name: Commit version file
       run: |
@@ -285,10 +319,14 @@ jobs:
         if git diff --staged --quiet; then
             echo "没有需要提交的变更。"
         else
-            if [ -n "$UPDATED_IMAGES" ]; then
+            if [ -n "$UPDATED_IMAGES" ] && [ -n "$INVALID_IMAGES" ]; then
+                git commit -m "chore: update ${UPDATED_IMAGES}; invalid ${INVALID_IMAGES} [skip ci]"
+            elif [ -n "$UPDATED_IMAGES" ]; then
                 git commit -m "chore: update ${UPDATED_IMAGES} [skip ci]"
             else
                 git commit -m "chore: update image versions [skip ci]"
             fi
             git push
         fi
+        # 退出码 0，保证失效镜像不会让整个 workflow 失败
+        exit 0
