@@ -11,7 +11,7 @@ pan93412/unblock-netease-music-enhanced:latest
 tinyfilemanager/tinyfilemanager:master
 xhofe/alist:latest
 xinjiawei1/emby_unlockd:latest
-hectorqin/reader:latest
+# hectorqin/reader:latest
 portainer/portainer-ce:latest
 qdtoday/qd:latest
 looby/aliyundrive-subscribe:latest
