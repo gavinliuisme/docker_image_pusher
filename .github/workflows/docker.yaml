@@ -6,6 +6,7 @@ on:
     branches: [ main ]
     paths-ignore:
       - 'version.txt'
+      - 'README.md'
 
 env:
   ALIYUN_REGISTRY: "${{ secrets.ALIYUN_REGISTRY }}"
