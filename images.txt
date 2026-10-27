@@ -1,4 +1,3 @@
-akiralereal/iptv:latest
 adguard/adguardhome:latest
 ghcr.io/pdfcrafttool/pdfcraft:latest
 ghcr.io/gavinliuisme/ws-scrcpy:latest
