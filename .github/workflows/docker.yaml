@@ -23,17 +23,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     # ============================================================
-    # 方案 A（前置）：清理上次运行遗留的 docker 资源
-    # 如果实际使用 self-hosted runner，这一步是关键，能立刻释放出
-    # 上一次 job 残留的几十 GB 镜像层/卷/构建缓存。
+    # 方案 A（前置）：彻底清理上次运行遗留的 docker / buildx / containerd 资源
+    # 关键：docker system prune 只能清 /var/lib/docker，清不到 /var/lib/containerd
+    # 所以前置清理必须显式删 buildx builder 并清掉 buildkit 缓存，
+    # 否则多跑几次后 buildkit 会把根分区撑爆（解压 buildctl 时 no space left on device）。
     # ============================================================
-    - name: Cleanup docker before run
+    - name: Cleanup docker / buildx / containerd before run
       run: |
-        echo "清理上次运行遗留的 docker 资源..."
+        echo "清理上次运行遗留的 docker / buildx / containerd 资源..."
+        # 1. 清理所有 buildx builder（停掉 buildkit 容器，释放 containerd 空间）
+        docker buildx ls || true
+        docker buildx rm --all-inactive 2>/dev/null || true
+        docker buildx prune -af --all || true
+        docker builder prune -af --all || true
+        # 2. 清理 docker 镜像/卷/网络
         docker system prune -af --volumes || true
-        docker buildx prune -af || true
+        # 3. 如果 /var/lib/containerd 还有大残留，手动清掉 buildkit 快照
+        if [ -d /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots ]; then
+          sudo rm -rf /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/* 2>/dev/null || true
+        fi
+        if [ -d /var/lib/docker/buildkit ]; then
+          sudo rm -rf /var/lib/docker/buildkit/* 2>/dev/null || true
+        fi
         echo "清理完成，当前磁盘空间："
         df -hT /
+        echo "==== docker / containerd 目录占用 ===="
+        sudo du -sh /var/lib/docker /var/lib/containerd 2>/dev/null || true
 
     - name: Before freeing up disk space
       run: |
@@ -64,8 +79,11 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Docker Setup Buildx
-      uses: docker/setup-buildx-action@v3
+    # 注：原 workflow 里有 docker/setup-buildx-action@v3，但脚本全程用
+    # docker pull / docker tag / docker push / docker manifest inspect，
+    # 根本用不到 buildx。setup-buildx-action 会启动一个 buildkit 容器，
+    # 反而把 /var/lib/containerd 撑爆（解压 buildctl 时报 no space left on device）。
+    # 已删除 buildx 步骤。
 
     - name: Login to Aliyun Registry
       uses: docker/login-action@v3
@@ -299,14 +317,20 @@ jobs:
             fi
 
             # ============================================================
-            # 方案 B：推完即删
-            # 删除源镜像和重打 tag 的目标镜像，再清理悬空层，
-            # 防止多个大镜像同时堆积导致磁盘写满。
+            # 方案 B：推完即删 + 立刻清悬空层
+            # docker image prune -f 会清掉 dangling 层，避免多镜像时层堆积。
+            # 注意只清 dangling（-f），不清所有（-af 会把还在用的也清掉）。
             # ============================================================
             docker rmi "$image" "$new_image" 2>/dev/null || true
             docker image prune -f 2>/dev/null || true
 
         done < images.txt
+
+        # ============================================================
+        # 循环结束后兜底：再做一次彻底清理，防止 commit 之前磁盘仍有残留
+        # ============================================================
+        docker image prune -af 2>/dev/null || true
+        docker builder prune -af 2>/dev/null || true
 
         # --- 6. 输出失效镜像汇总 ---
         echo "=============================================================================="
@@ -352,15 +376,25 @@ jobs:
         exit 0
 
     # ============================================================
-    # 方案 A（兜底）：无论成功/失败都执行清理
-    # 防止本次运行残留的镜像/层/卷/构建缓存累积到下一次运行。
+    # 方案 A（兜底）：无论成功/失败都执行彻底清理
+    # 必须显式清 buildx 和 containerd 残留，否则多跑几次磁盘必然爆。
     # ============================================================
-    - name: Cleanup docker after run
+    - name: Cleanup docker / buildx / containerd after run
       if: always()
       run: |
-        echo "运行结束后清理 docker 资源..."
-        docker system prune -af --volumes || true
-        docker buildx prune -af || true
+        echo "运行结束后彻底清理 docker / buildx / containerd 资源..."
+        docker buildx rm --all-inactive 2>/dev/null || true
+        docker buildx prune -af --all 2>/dev/null || true
+        docker builder prune -af --all 2>/dev/null || true
+        docker system prune -af --volumes 2>/dev/null || true
+        if [ -d /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots ]; then
+          sudo rm -rf /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/* 2>/dev/null || true
+        fi
+        if [ -d /var/lib/docker/buildkit ]; then
+          sudo rm -rf /var/lib/docker/buildkit/* 2>/dev/null || true
+        fi
         echo "=============================================================================="
         df -hT /
+        echo "==== docker / containerd 目录占用 ===="
+        sudo du -sh /var/lib/docker /var/lib/containerd 2>/dev/null || true
         echo "=============================================================================="
