@@ -1,4 +1,5 @@
 ghcr.io/gavinliuisme/hongguo-web:latest
+tailscale/tailscale:unstable
 akiralereal/iptv:latest
 adguard/adguardhome:latest
 # ghcr.io/pdfcrafttool/pdfcraft:latest
