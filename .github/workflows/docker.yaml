@@ -7,12 +7,12 @@ on:
         description: '检测范围'
         type: choice
         options:
-          - all              # 检测全部镜像
-          - changed-only     # 只检测 images.txt 中新增/编辑的行（删除的行不检测）
-          - specific         # 只检测 image_filter 指定的镜像（模糊匹配）
-        default: all
+          - 全部检测
+          - 仅检测变化(基于images.txt)
+          - 指定镜像检测
+        default: 全部检测
       image_filter:
-        description: '当 target_mode=specific 时填写镜像名，支持模糊匹配，多个用逗号分隔。例: home-assistant,nginx'
+        description: '当检测范围为「指定镜像检测」时填写镜像名，支持模糊匹配，多个用逗号分隔。例: home-assistant,nginx'
         type: string
         default: ''
   push:
@@ -27,10 +27,15 @@ env:
   DOCKER_CLIENT_TIMEOUT: 120
   COMPOSE_HTTP_TIMEOUT: 120
   # === 检测范围模式（在 workflow 级 env 里集中计算一次，所有 step 都能用）===
-  # 外部 API dispatches 不传 inputs 时，target_mode 用默认值 'all'
-  # push 触发时也固定 'all'（push 一般是 images.txt 有改动，需要全量检测）
-  # 只有手动 workflow_dispatch 时，用户选的 target_mode 才生效
-  TARGET_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_mode || 'all' }}
+  # 下拉选项 -> 内部 mode：
+  #   '全部检测'                         -> all
+  #   '仅检测变化(基于images.txt)'        -> changed-only
+  #   '指定镜像检测'                      -> specific
+  # 触发来源 -> mode：
+  #   push 触发                         -> changed-only（只检测 images.txt 中变化的行）
+  #   外部 API dispatches（不带 inputs） -> all
+  #   workflow_dispatch 手动触发         -> 用户选的 target_mode
+  TARGET_MODE: ${{ github.event_name == 'push' && 'changed-only' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.target_mode == '全部检测' && 'all' || github.event.inputs.target_mode == '仅检测变化(基于images.txt)' && 'changed-only' || github.event.inputs.target_mode == '指定镜像检测' && 'specific' || 'all') || 'all') }}
   IMAGE_FILTER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_filter || '' }}
 
 permissions:
