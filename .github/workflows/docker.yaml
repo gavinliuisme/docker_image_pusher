@@ -8,7 +8,7 @@ on:
         type: choice
         options:
           - all              # 检测全部镜像
-          - changed-only     # 只检测 version.txt 中新增/编辑的行（删除的行不检测）
+          - changed-only     # 只检测 images.txt 中新增/编辑的行（删除的行不检测）
           - specific         # 只检测 image_filter 指定的镜像（模糊匹配）
         default: all
       image_filter:
@@ -27,8 +27,8 @@ env:
   DOCKER_CLIENT_TIMEOUT: 120
   COMPOSE_HTTP_TIMEOUT: 120
   # === 检测范围模式（在 workflow 级 env 里集中计算一次，所有 step 都能用）===
-  # schedule / 外部 API dispatches 不传 inputs 时，target_mode 用默认值 'all'
-  # push 触发时也固定 'all'（push 一般是 images.txt 新增镜像，需要全量检测）
+  # 外部 API dispatches 不传 inputs 时，target_mode 用默认值 'all'
+  # push 触发时也固定 'all'（push 一般是 images.txt 有改动，需要全量检测）
   # 只有手动 workflow_dispatch 时，用户选的 target_mode 才生效
   TARGET_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_mode || 'all' }}
   IMAGE_FILTER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_filter || '' }}
@@ -157,12 +157,12 @@ jobs:
         # ============================================================
         # 检测范围模式（TARGET_MODE / IMAGE_FILTER 由 workflow 级 env 注入）
         #   all           -> 检测全部镜像
-        #   changed-only   -> 只检测 version.txt 中"新增/编辑"的行（删除的行不检测）
+        #   changed-only   -> 只检测 images.txt 中"新增/编辑"的行（删除的行不检测）
         #   specific       -> 只检测 IMAGE_FILTER 模糊匹配的镜像（逗号分隔多个）
         # 触发来源：
-        #   schedule 定时 / 外部 API dispatches（不带 inputs）-> all
-        #   push 触发                                       -> all
-        #   workflow_dispatch 手动触发                      -> 用户选的 target_mode
+        #   外部 API dispatches（不带 inputs）-> all
+        #   push 触发                       -> all
+        #   workflow_dispatch 手动触发      -> 用户选的 target_mode
         # ============================================================
         TARGET_MODE="${TARGET_MODE:-all}"
         IMAGE_FILTER="${IMAGE_FILTER:-}"
@@ -243,54 +243,52 @@ jobs:
         fi
 
         # ============================================================
-        # 检测 version.txt 变化（仅 changed-only 模式生效）
-        #   - 用 git diff HEAD~1 HEAD -- version.txt
-        #   - 新增/编辑的行（+开头）-> 提取 key 加入 force_check_keys 集合，强制检测
-        #   - 删除的行（-开头）      -> 提取 key 加入 skip_keys 集合，跳过检测
-        #   - 没有变化的 key        -> 按 digest 对比逻辑（原行为）
-        # 注意：push 触发时 paths-ignore 排除 version.txt，单独改 version.txt 不会触发
-        #       workflow；只有同时改 images.txt 才会触发，此时 git diff version.txt
-        #       仍能正确反映 version.txt 的手动改动。
+        # 检测 images.txt 变化（仅 changed-only 模式生效）
+        #   - 用 git diff HEAD~1 HEAD -- images.txt
+        #   - 新增/编辑的行（+开头）-> 提取 image 加入 force_check_keys，强制检测
+        #   - 删除的行（-开头）      -> image 已不在 images.txt 里，第二遍循环自然不会遍历到，无需特殊处理
+        #   - 没有变化的 image      -> 跳过检测（节省时间和带宽）
+        # 注：version.txt 是 workflow 自动维护的，用户不会手动改；
+        #     images.txt 才是用户维护的镜像清单，所以检测 images.txt 的变化才有意义。
         # ============================================================
         declare -A force_check_keys
-        declare -A skip_keys
+        IMAGES_FILE="images.txt"
 
         if [ "$TARGET_MODE" = "changed-only" ]; then
-            echo "==== changed-only 模式：检测 version.txt 在最近一次 commit 中的变化 ===="
+            echo "==== changed-only 模式：检测 images.txt 在最近一次 commit 中的变化 ===="
             if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-                # 拿到 version.txt 在 HEAD~1..HEAD 之间的 diff
-                # + 开头：新增/编辑；- 开头：删除
-                diff_output=$(git diff HEAD~1 HEAD -- "$VERSION_FILE" 2>/dev/null || true)
+                # 拿到 images.txt 在 HEAD~1..HEAD 之间的 diff
+                # + 开头：新增/编辑；- 开头：删除（不处理，因为 images.txt 里没了就不在循环里）
+                diff_output=$(git diff HEAD~1 HEAD -- "$IMAGES_FILE" 2>/dev/null || true)
 
                 added_count=0
-                deleted_count=0
                 while IFS= read -r dline; do
                     [[ -z "$dline" ]] && continue
                     case "$dline" in
                         +++*|---*) continue ;;  # 跳过文件头
                         +*)
                             content="${dline#+}"
-                            # 解析 key=val 中的 key
-                            key=$(echo "$content" | cut -d'=' -f1)
-                            [[ -z "$key" ]] && continue
-                            force_check_keys["$key"]=1
+                            # 跳过注释行和空行
+                            [[ -z "$content" ]] && continue
+                            if echo "$content" | grep -q '^\s*#'; then continue; fi
+                            # 提取 image（与主循环一致：取第一个非 -- 开头的 token，去掉 digest 后缀）
+                            img=$(echo "$content" | tr ' ' '\n' | grep -v '^--' | head -n 1)
+                            [[ -z "$img" ]] && continue
+                            img="${img%%@*}"
+                            force_check_keys["$img"]=1
                             added_count=$((added_count+1))
                             ;;
                         -*)
-                            content="${dline#-}"
-                            key=$(echo "$content" | cut -d'=' -f1)
-                            [[ -z "$key" ]] && continue
-                            skip_keys["$key"]=1
-                            deleted_count=$((deleted_count+1))
+                            # 删除的行：images.txt 里已经没了，第二遍循环不会遍历到，无需处理
+                            :
                             ;;
                     esac
                 done <<< "$diff_output"
 
-                echo "  version.txt 变化检测完成："
+                echo "  images.txt 变化检测完成："
                 echo "    新增/编辑需检测的镜像 (${added_count}): ${!force_check_keys[*]}"
-                echo "    删除跳过的镜像 (${deleted_count})    : ${!skip_keys[*]}"
                 if [ ${#force_check_keys[@]} -eq 0 ]; then
-                    echo "  version.txt 无新增/编辑行，changed-only 模式下本次没有需要检测的镜像。"
+                    echo "  images.txt 无新增/编辑行，changed-only 模式下本次没有需要检测的镜像。"
                 fi
             else
                 echo "  警告：无 HEAD~1 可对比（首次 commit 或浅克隆），changed-only 退化为 all 模式。"
@@ -404,24 +402,17 @@ jobs:
 
             # ============================================================
             # 模式过滤：根据 TARGET_MODE 决定是否跳过当前镜像
-            #   all          -> 不过滤
-            #   changed-only -> 只处理 force_check_keys 中的镜像（version.txt 新增/编辑的行）
-            #                  如果在 skip_keys 中（version.txt 删除的行）也跳过
+            #   all          -> 不过滤，全部检测
+            #   changed-only -> 只处理 force_check_keys 中的镜像（images.txt 新增/编辑的行）
+            #                  不在 force_check_keys 中 = 未变化 -> 跳过
+            #                  （images.txt 里被删除的行不会出现在第二遍循环里，无需特殊处理）
             #   specific     -> 只处理 IMAGE_FILTER 模糊匹配的镜像
-            # 注意：git diff 把"编辑行"表示为 -旧行 +新行，所以一个 key 可能同时
-            #       出现在 skip_keys 和 force_check_keys 中。判定时先看 force_check_keys：
-            #       在 force_check_keys 中 = 新增或编辑 -> 检测
-            #       不在 force_check_keys 但在 skip_keys 中 = 真正删除 -> 跳过
-            #       都不在 = 未变化 -> 跳过
             # ============================================================
             if [ "$TARGET_MODE" = "changed-only" ]; then
                 if [[ -n "${force_check_keys[$map_key]}" ]]; then
-                    echo ">>> changed-only 模式：version.txt 中该行新增/编辑，强制检测。"
-                elif [[ -n "${skip_keys[$map_key]}" ]]; then
-                    echo ">>> changed-only 模式：version.txt 中该行被删除，跳过检测。"
-                    continue
+                    echo ">>> changed-only 模式：images.txt 中该行新增/编辑，强制检测。"
                 else
-                    echo ">>> changed-only 模式：version.txt 中该行未变化，跳过检测。"
+                    echo ">>> changed-only 模式：images.txt 中该行未变化，跳过检测。"
                     continue
                 fi
             elif [ "$TARGET_MODE" = "specific" ]; then
@@ -557,23 +548,21 @@ jobs:
         # 写入条件：
         #   - 有镜像被同步成功（HAS_UPDATE=1）；或
         #   - version.txt 不存在（首次运行）
-        #   - changed-only / specific 模式下，即便 HAS_UPDATE=0 也要按 version_map 重写
-        #     （因为用户可能手动删除了 version.txt 的某些行，期望保留删除状态）
-        # 写入规则：跳过 version_map 中 value 为空的 key（changed-only 模式下被删除的行）
-        FORCE_WRITE=0
-        if [ "$TARGET_MODE" = "changed-only" ] || [ "$TARGET_MODE" = "specific" ]; then
-            FORCE_WRITE=1
-        fi
-        if [ "$HAS_UPDATE" -eq 1 ] || [ ! -f "$VERSION_FILE" ] || [ "$FORCE_WRITE" -eq 1 ]; then
-            echo "更新 $VERSION_FILE 文件 (TARGET_MODE=${TARGET_MODE}, HAS_UPDATE=${HAS_UPDATE}, FORCE_WRITE=${FORCE_WRITE})..."
+        # 写入规则：
+        #   - 跳过 version_map 中 value 为空的 key
+        #     （新增到 images.txt 但本次同步失败的镜像，不在 version.txt 里留空行）
+        #   - changed-only / specific 模式下若 HAS_UPDATE=0 则不重写 version.txt
+        #     （避免不必要的 commit）
+        if [ "$HAS_UPDATE" -eq 1 ] || [ ! -f "$VERSION_FILE" ]; then
+            echo "更新 $VERSION_FILE 文件 (TARGET_MODE=${TARGET_MODE}, HAS_UPDATE=${HAS_UPDATE})..."
             rm -f "$VERSION_FILE"
             written=0
             skipped_empty=0
             for key in "${ordered_keys[@]}"; do
                 val="${version_map[$key]}"
                 if [ -z "$val" ]; then
-                    # version_map 中该 key 无值（changed-only 模式下被删除的行 / 新增还未同步成功的镜像）
-                    # 跳过不写，保持"删除"状态
+                    # version_map 中该 key 无值（新增到 images.txt 但本次同步失败）
+                    # 跳过不写，下次同步成功再写入
                     skipped_empty=$((skipped_empty+1))
                     continue
                 fi
