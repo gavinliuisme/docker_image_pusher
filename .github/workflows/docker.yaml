@@ -24,10 +24,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     # ============================================================
-    # 方案 A（前置）：彻底清理上次运行遗留的 docker / buildx / containerd 资源
-    # 关键：docker system prune 只能清 /var/lib/docker，清不到 /var/lib/containerd
-    # 所以前置清理必须显式删 buildx builder 并清掉 buildkit 缓存，
-    # 否则多跑几次后 buildkit 会把根分区撑爆（解压 buildctl 时 no space left on device）。
+    # 前置清理：清掉上次运行遗留的 docker / buildx / containerd 资源
+    # 关键：docker system prune 只能清 /var/lib/docker，清不到 /var/lib/containerd。
+    # 新版 Docker（25+）默认启用 containerd-snapshotter，镜像层实际写在
+    # /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/ 下，
+    # 必须显式清理这里，否则多跑几次会累积出 GB 级残留。
+    # 注：已不使用 easimon/maximize-build-space —— 它把 /var/lib/docker 挂到大分区，
+    # 但 /var/lib/containerd 仍留在被缩小的小根分区上，docker pull 解压层时必然爆盘。
+    # 直接用 ubuntu-latest 自带的 ~84 GB 单根分区即可。
     # ============================================================
     - name: Cleanup docker / buildx / containerd before run
       run: |
@@ -51,41 +55,16 @@ jobs:
         echo "==== docker / containerd 目录占用 ===="
         sudo du -sh /var/lib/docker /var/lib/containerd 2>/dev/null || true
 
-    - name: Before freeing up disk space
+    - name: Disk space check (start)
       run: |
-        echo "Before freeing up disk space"
+        echo "==== 起始磁盘空间（不使用 maximize-build-space，直接吃 ubuntu-latest 自带 ~84 GB 根分区）===="
         echo "=============================================================================="
         df -hT
         echo "=============================================================================="
-
-    # ============================================================
-    # 方案 2：保留 maximize-build-space，但把 root-reserve-mb 调到 10240（10 GB）
-    # 原来的 2048 MB 太极限，runner 自己的 _diag/Worker_*.log、/tmp、apt 缓存
-    # 一旦写满就会直接让 worker 进程崩溃（No space left on device）。
-    # 同时把 @master pin 到具体 commit SHA，避免上游 master 变动导致 workflow 莫名失败。
-    # SHA: c28619d8999a147d5e09c1199f84ff6af6ad5794  (2025-03-28)
-    # ============================================================
-    - name: Maximize build space
-      uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
-      with:
-        root-reserve-mb: 10240
-        swap-size-mb: 128
-        remove-dotnet: 'true'
-        remove-haskell: 'true'
-        build-mount-path: '/var/lib/docker/'
-
-    - name: Restart docker
-      run: |
-        sudo service docker restart
-        echo "==== Restart docker 完成，当前磁盘空间 ===="
-        df -hT /
-
-    - name: Free up disk space complete
-      run: |
-        echo "Free up disk space complete"
-        echo "=============================================================================="
-        df -hT
-        echo "=============================================================================="
+        echo "==== docker / containerd 目录占用 ===="
+        sudo du -sh /var/lib/docker /var/lib/containerd 2>/dev/null || true
+        echo "==== Docker info ===="
+        docker info --format 'Storage Driver: {{.Driver}}{{"\n"}}Docker Root Dir: {{.DockerRootDir}}{{"\n"}}Containerd Snapshotter: {{.ExperimentalBuild}}' 2>/dev/null || docker info 2>/dev/null | head -50
 
     - name: Checkout Code
       uses: actions/checkout@v4
