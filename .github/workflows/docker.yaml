@@ -63,8 +63,49 @@ jobs:
         echo "=============================================================================="
         echo "==== docker / containerd 目录占用 ===="
         sudo du -sh /var/lib/docker /var/lib/containerd 2>/dev/null || true
-        echo "==== Docker info ===="
-        docker info --format 'Storage Driver: {{.Driver}}{{"\n"}}Docker Root Dir: {{.DockerRootDir}}{{"\n"}}Containerd Snapshotter: {{.ExperimentalBuild}}' 2>/dev/null || docker info 2>/dev/null | head -50
+        echo "==== Docker info (禁用前) ===="
+        docker info 2>/dev/null | grep -E 'Storage Driver|Docker Root Dir|containerd-snapshotter' || docker info 2>/dev/null | head -50
+
+    # ============================================================
+    # 关键：禁用 containerd-snapshotter，强制使用 overlayfs2 + Docker V2 schema 2 + gzip 层
+    #
+    # 原因：ubuntu-latest 默认装的 Docker 26+ 默认启用 containerd-snapshotter 特性，
+    #   docker pull OCI 镜像（如 ghcr.io/home-assistant/home-assistant:stable）时会
+    #   原样保留 OCI 格式：
+    #     - manifest mediaType: application/vnd.oci.image.manifest.v1+json
+    #     - 层 mediaType:      application/vnd.oci.image.layer.v1.tar+zstd
+    #   docker push 时也原样推送 zstd 层。
+    #   但阿里云 ACR 个人版只接受：
+    #     - manifest: application/vnd.docker.distribution.manifest.v2+json
+    #     - 层:        application/vnd.docker.image.rootfs.diff.tar.gzip
+    #   收到 zstd 层就直接报 "error from registry: blob type invalid"。
+    #
+    # 禁用 containerd-snapshotter 后：
+    #   - Storage Driver 回退为 overlayfs2
+    #   - docker pull 时下载 blob 并解压为 diff 存储
+    #   - docker push 时用 gzip 重新压缩层，manifest 用 Docker V2 schema 2
+    #   - 阿里云 ACR 个人版能正常接受
+    # ============================================================
+    - name: Disable containerd-snapshotter (force overlayfs2 + Docker V2 schema for ACR compat)
+      run: |
+        echo "禁用 containerd-snapshotter，强制 overlayfs2 driver + Docker V2 schema 2 + gzip 层"
+        echo "原因：阿里云 ACR 个人版不接受 OCI image manifest / zstd 层（报 'blob type invalid'）"
+        sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+        {
+          "features": {
+            "containerd-snapshotter": false
+          }
+        }
+        EOF
+        echo "==== /etc/docker/daemon.json ===="
+        cat /etc/docker/daemon.json
+        echo "==== 重启 docker ===="
+        sudo service docker restart
+        sleep 3
+        echo "==== 配置后 Docker info ===="
+        docker info 2>/dev/null | grep -E 'Storage Driver|Docker Root Dir' || docker info 2>/dev/null | head -30
+        echo "==== 配置后磁盘空间 ===="
+        df -hT /
 
     - name: Checkout Code
       uses: actions/checkout@v4
