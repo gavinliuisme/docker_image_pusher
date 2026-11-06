@@ -16,6 +16,7 @@ env:
 
 permissions:
   contents: write
+  actions: write      # 清理历史 workflow runs 需要 actions: write 权限
 
 jobs:
   build:
@@ -57,8 +58,15 @@ jobs:
         df -hT
         echo "=============================================================================="
 
+    # ============================================================
+    # 方案 2：保留 maximize-build-space，但把 root-reserve-mb 调到 10240（10 GB）
+    # 原来的 2048 MB 太极限，runner 自己的 _diag/Worker_*.log、/tmp、apt 缓存
+    # 一旦写满就会直接让 worker 进程崩溃（No space left on device）。
+    # 同时把 @master pin 到具体 commit SHA，避免上游 master 变动导致 workflow 莫名失败。
+    # SHA: c28619d8999a147d5e09c1199f84ff6af6ad5794  (2025-03-28)
+    # ============================================================
     - name: Maximize build space
-      uses: easimon/maximize-build-space@master
+      uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
       with:
         root-reserve-mb: 10240
         swap-size-mb: 128
@@ -67,7 +75,10 @@ jobs:
         build-mount-path: '/var/lib/docker/'
 
     - name: Restart docker
-      run: sudo service docker restart
+      run: |
+        sudo service docker restart
+        echo "==== Restart docker 完成，当前磁盘空间 ===="
+        df -hT /
 
     - name: Free up disk space complete
       run: |
@@ -91,6 +102,11 @@ jobs:
         registry: ${{ env.ALIYUN_REGISTRY }}
         username: ${{ secrets.ALIYUN_REGISTRY_USER }}
         password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
+
+    - name: Disk space after login
+      run: |
+        echo "==== Login 完成，开始同步前磁盘空间 ===="
+        df -hT /
 
     - name: Build and push image Aliyun
       run: |
@@ -201,6 +217,11 @@ jobs:
 
 
         # --- 5. 第二遍循环：对比、同步、记录顺序 ---
+        # 周期性彻底清理的间隔：每同步 N 个镜像做一次 docker system prune -af
+        # 防止大镜像（clouddrive2、firefox、hivision_idphotos 等）层堆积把磁盘撑爆。
+        PRUNE_EVERY=10
+        SYNCED_SINCE_LAST_PRUNE=0
+
         while IFS= read -r line || [ -n "$line" ]; do
             [[ -z "$line" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then continue; fi
@@ -324,6 +345,21 @@ jobs:
             docker rmi "$image" "$new_image" 2>/dev/null || true
             docker image prune -f 2>/dev/null || true
 
+            # ============================================================
+            # 周期性彻底清理：每同步 PRUNE_EVERY 个镜像做一次 system prune -af
+            # 把 buildkit 缓存、未被引用的中间层一并清掉，控制大镜像列表的峰值占用。
+            # 注意：这里只对"实际同步过的镜像"计数，跳过的镜像不计入。
+            # ============================================================
+            SYNCED_SINCE_LAST_PRUNE=$((SYNCED_SINCE_LAST_PRUNE+1))
+            if [ $((SYNCED_SINCE_LAST_PRUNE % PRUNE_EVERY)) -eq 0 ]; then
+                echo ">>> 已连续同步 $SYNCED_SINCE_LAST_PRUNE 个镜像，执行一次彻底清理..."
+                docker system prune -af 2>/dev/null || true
+                docker builder prune -af 2>/dev/null || true
+                SYNCED_SINCE_LAST_PRUNE=0
+                echo ">>> 清理完成，当前磁盘空间："
+                df -hT /
+            fi
+
         done < images.txt
 
         # ============================================================
@@ -355,6 +391,9 @@ jobs:
         echo "UPDATED_IMAGES=$UPDATED_IMAGES" >> $GITHUB_ENV
         echo "INVALID_IMAGES=$INVALID_IMAGES" >> $GITHUB_ENV
 
+        echo "==== 同步完成，commit 之前磁盘空间 ===="
+        df -hT /
+
     - name: Commit version file
       run: |
         git config --global user.name 'github-actions[bot]'
@@ -372,6 +411,8 @@ jobs:
             fi
             git push
         fi
+        echo "==== Commit 完成，磁盘空间 ===="
+        df -hT /
         # 退出码 0，保证失效镜像不会让整个 workflow 失败
         exit 0
 
@@ -398,3 +439,109 @@ jobs:
         echo "==== docker / containerd 目录占用 ===="
         sudo du -sh /var/lib/docker /var/lib/containerd 2>/dev/null || true
         echo "=============================================================================="
+
+  # ============================================================
+  # 清理 30 天前的 Actions 运行记录
+  # - 用 GitHub REST API：GET /repos/{owner}/{repo}/actions/runs
+  #   ?status=completed&per_page=100&page=N，遍历分页拿全部 completed run，
+  #   created_at 早于 30 天前的，DELETE /repos/{owner}/{repo}/actions/runs/{id}
+  # - 只删 status=completed（success/failure/cancelled/skipped/timed_out），
+  #   in_progress / queued / waiting / pending 一律不动。
+  # - 删除失败不阻断主流程，仅打印告警。
+  # - 当前 run 自己（GITHUB_RUN_ID）一定跳过。
+  # - 需要 secrets.GITHUB_TOKEN，且 permissions.actions: write。
+  # - 30 天阈值可由 env.RETENTION_DAYS 调整。
+  # ============================================================
+  cleanup-old-runs:
+    name: Cleanup old workflow runs (>30d)
+    runs-on: ubuntu-latest
+    if: always()
+    needs: build
+    env:
+      RETENTION_DAYS: "30"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete workflow runs older than RETENTION_DAYS
+        run: |
+          set -uo pipefail
+
+          OWNER_REPO="${GH_REPO}"
+          THRESHOLD_DATE=$(date -u -d "${RETENTION_DAYS} days ago" '+%Y-%m-%dT%H:%M:%SZ')
+          echo "将删除 ${OWNER_REPO} 中 created_at < ${THRESHOLD_DATE} 的 completed runs"
+          echo "当前 run (跳过): ${GITHUB_RUN_ID}"
+          echo "=============================================================================="
+
+          # 借助 gh CLI 遍历分页（一次性拿全 completed run，自动分页）
+          # 只取 status=completed（success/failure/cancelled/skipped/timed_out），不碰 in_progress/queued。
+          deleted=0
+          skipped_running=0
+          skipped_self=0
+          failed=0
+
+          # 用 gh api 流式分页拉取，避免一次性把全部 run 放内存
+          page=1
+          while :; do
+            resp=$(gh api -X GET \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${OWNER_REPO}/actions/runs?status=completed&per_page=100&page=${page}" \
+              --paginate=false 2>/dev/null) || {
+                echo ">>> gh api 拉取 page=${page} 失败，停止。"
+                break
+              }
+
+            count=$(echo "$resp" | jq '.workflow_runs | length')
+            if [ "$count" = "0" ] || [ -z "$count" ]; then
+              echo "page=${page}: 无更多 runs，结束遍历。"
+              break
+            fi
+
+            echo "page=${page}: 拿到 ${count} 条 completed run，开始判定..."
+
+            # 把每条 run 的 id / created_at / name / status / conclusion / html_url 提取出来逐条处理
+            echo "$resp" | jq -c '.workflow_runs[] | {id, name, status, conclusion, created_at, html_url}' | while read -r item; do
+              run_id=$(echo "$item" | jq -r '.id')
+              run_name=$(echo "$item" | jq -r '.name')
+              run_status=$(echo "$item" | jq -r '.status')
+              run_conclusion=$(echo "$item" | jq -r '.conclusion')
+              run_created=$(echo "$item" | jq -r '.created_at')
+              run_url=$(echo "$item" | jq -r '.html_url')
+
+              # 跳过当前 run 自己
+              if [ "$run_id" = "${GITHUB_RUN_ID}" ]; then
+                echo "  [skip-self]  run_id=${run_id}  name=${run_name}"
+                skipped_self=$((skipped_self+1))
+                continue
+              fi
+
+              # status=completed 才会出现在结果里，这里只是再保险一道
+              if [ "$run_status" != "completed" ]; then
+                echo "  [skip-running] run_id=${run_id} status=${run_status} (不删正在跑的)"
+                skipped_running=$((skipped_running+1))
+                continue
+              fi
+
+              # created_at 早于阈值 -> 删除
+              if [[ "$run_created" < "$THRESHOLD_DATE" ]]; then
+                echo "  [delete] run_id=${run_id} name=${run_name} conclusion=${run_conclusion} created=${run_created}"
+                if gh api -X DELETE "/repos/${OWNER_REPO}/actions/runs/${run_id}" >/dev/null 2>&1; then
+                  echo "    -> 已删除"
+                else
+                  echo "    -> 删除失败（可能无权限或已被删）"
+                fi
+              else
+                :  # 还在 30 天内，跳过
+              fi
+            done
+
+            page=$((page+1))
+            # GitHub API 分页上限 100 页，超过强制退出防止死循环
+            if [ "$page" -gt 100 ]; then
+              echo ">>> 已遍历 100 页，强制停止（如 run 数量异常多，请加大 per_page 或多次触发）。"
+              break
+            fi
+          done
+
+          echo "=============================================================================="
+          echo "清理完成。"
+          echo "=============================================================================="
