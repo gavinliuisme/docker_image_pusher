@@ -7,7 +7,7 @@ ghcr.io/gavinliuisme/ws-scrcpy:latest
 ghcr.io/home-assistant/home-assistant:stable
 ghcr.io/metacubex/metacubexd:latest
 metacubex/mihomo:latest
-containrrr/watchtower:latest
+nickfedor/watchtower:latest
 xiaoyaliu/alist:latest
 irinesistiana/mosdns:latest
 cloudnas/clouddrive2-unstable:latest
