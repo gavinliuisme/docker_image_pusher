@@ -1,3 +1,4 @@
+ghcr.io/gavinliuisme/hongguo-drama:latest
 ghcr.io/gavinliuisme/hongguo-web:latest
 tailscale/tailscale:unstable
 akiralereal/iptv:latest
